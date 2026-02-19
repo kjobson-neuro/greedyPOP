@@ -1,0 +1,31 @@
+{
+    "config": {
+        "origin": "Keep",
+        "tracer": "Florbetaben"
+    },
+    "inputs": {
+        "petdata": {
+            "base": "file",
+            "location": {
+                "name": "Brain-nac-2mm.xml_4217.nii.gz",
+                "path": "/flywheel/v0/input/petdata/Brain-nac-2mm.xml_4217.nii.gz"
+            },
+            "object": {
+                "size": 2949472,
+                "type": null,
+                "mimetype": "application/octet-stream",
+                "modality": null,
+                "classification": {},
+                "tags": [],
+                "info": {},
+                "version": 1,
+                "file_id": "",
+                "origin": {
+                    "type": "user",
+                    "id": ""
+                }
+            }
+        }
+    },
+    "destination": {}
+}
