@@ -53,6 +53,7 @@ def reset_image_origin(file_path, work_dir):
     centered_img = f"{work_dir}/img_centered.nii.gz"
     c.execute(f'"{file_path}" -origin-voxel 50% -o "{centered_img}"')
 
+# Extracting values from SUVR via masks - doing this all at once caused RAM usage to go too high, so have to do it by slice
 def masked_mean_from_disk(img, mask):
     data = img.dataobj
     mask = mask.dataobj
@@ -68,6 +69,7 @@ def masked_mean_from_disk(img, mask):
             count += int(vox.size)
     return (total / count) if count else np.nan
     
+# Dice score to evaluate the registration semi-automatically
 def dice_score(mask1, mask2):
 # Load the NIfTI files
     mask1_img = nb.load(mask1)
@@ -89,6 +91,7 @@ def dice_score(mask1, mask2):
     
     return similarity
 
+# If registration does not work, we try again with all brains skull-stripped
 def stripped_registration(pet_scan, pet_mask, warptempl, warptempl_mask):
     # Redo the registration if dice score < .90
     # Do registration after skullstripping - keeping the rigid registration and onwards
@@ -153,7 +156,7 @@ def stripped_registration(pet_scan, pet_mask, warptempl, warptempl_mask):
     img_moving_def = sitk.ReadImage(init_path)
 
     # Warp the image to MNI space using Greedy
-    # Allowing it to write over the old w_pet image here because it will be cleaner for output and we already know that it had a bar registration
+    # Allowing it to write over the old w_pet image here because it will be cleaner for output and we already know that it had a bad registration
     full_prefix = 'w_pet'
     deformedimg = os.path.join(work_dir, f'{full_prefix}.nii.gz')
     # Perform registration
@@ -228,7 +231,7 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     print(f"Template used for registration: {warptempl}")
 
     # Load data
-    temp_mask_path = os.path.join(work_dir, 'temp_mask.nii.gz')
+    temp_mask_path = os.path.join(temp_dir, 'temp_mask.nii.gz')
 
     # Perform affine registration    
     prefix = 'init_reg'
@@ -237,6 +240,9 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     img_moving = sitk.ReadImage(centered_img)
     fixed_mask = sitk.ReadImage(temp_mask_path)
     moving_mask = sitk.ReadImage(centered_mask)
+
+    # Create mat image to save affine transform
+    affine_mat = os.path.join(work_dir, f'{prefix}.mat')
 
     g.execute('-threads 1 '
            ' -i my_fixed my_moving '
@@ -256,6 +262,7 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
 
     warped_img = os.path.join(work_dir, f'{prefix}.nii.gz')
     sitk.WriteImage(g['warpedimg'], warped_img)
+    np.savetxt(affine_mat, g['affine'])
 
     # Load data for full deformed reg
     init_path = os.path.join(work_dir, "init_reg.nii.gz")
@@ -264,6 +271,7 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     # Warp the image to template space using Greedy
     full_prefix = 'w_pet'
     deformedimg = os.path.join(work_dir, f'{full_prefix}.nii.gz')
+    deform_warp = os.path.join(work_dir, f'{full_prefix}_warp.nii.gz')
     # Perform registration
     g.execute('-threads 1 '
           '-i my_fixed my_moving '
@@ -279,9 +287,15 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
               ' -rf my_fixed '
               ' -rm my_moving deformedimg '
           '-r deformed_affine ',
-          deformedimg = None)
+          deformedimg = None, inverse_warp=None)
 
-    sitk.WriteImage(g['deformedimg'] , deformedimg)
+    sitk.WriteImage(g['deformedimg'], deformedimg)
+    sitk.WriteImage(g['deformed_affine'], deform_warp)
+
+    # Invert the warp field using greedy (must use file paths for vector images)
+    deform_inv_warp = os.path.join(work_dir, f'{full_prefix}_inverse_warp.nii.gz')
+    g.execute(f'-threads 1 '
+              f'-iw {deform_warp} {deform_inv_warp} ')
 
     w_pet_mask = os.path.join(work_dir, 'w_pet_mask.nii.gz')
     w_pet_brain = os.path.join(work_dir, 'w_pet_brain.nii.gz')
@@ -372,11 +386,11 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     smoothed_data = smoothed_img.get_fdata(dtype=np.float32)
  
     from nilearn.image import resample_to_img
-    ctx_resamp = resample_to_img(ctx_img, smoothed_img, interpolation="nearest")
-    wc_resamp = resample_to_img(wc_img, smoothed_img, interpolation="nearest")
-    wcgm_resamp = resample_to_img(wcgm_img, smoothed_img, interpolation="nearest")
-    pons_resamp = resample_to_img(pons_img, smoothed_img, interpolation="nearest")
-    wcbs_resamp = resample_to_img(wcbs_img, smoothed_img, interpolation="nearest")
+    ctx_resamp = resample_to_img(ctx_img, smoothed_img, interpolation="nearest", copy_header=True)
+    wc_resamp = resample_to_img(wc_img, smoothed_img, interpolation="nearest", copy_header=True)
+    wcgm_resamp = resample_to_img(wcgm_img, smoothed_img, interpolation="nearest", copy_header=True)
+    pons_resamp = resample_to_img(pons_img, smoothed_img, interpolation="nearest", copy_header=True)
+    wcbs_resamp = resample_to_img(wcbs_img, smoothed_img, interpolation="nearest", copy_header=True)
 
     avg_ctx_voi_bin = masked_mean_from_disk(smoothed_img, ctx_resamp)
     avg_wc_voi_bin  = masked_mean_from_disk(smoothed_img, wc_resamp)
@@ -441,7 +455,38 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     suvr_image = nb.Nifti1Image(suvr_data, suv_data.affine, suv_data.header)
     suvr_file = os.path.join(output_dir, 'suvr.nii.gz')
     nb.save(suvr_image, suvr_file)
-    
+
+    # Warp SUVR and sw_pet back to native space using inverse transforms
+    g = Greedy3D()
+    native_ref = sitk.ReadImage(centered_img)
+
+    # SUVR to native space (use file paths for warp since vector images not supported in-memory)
+    # Use greedy's native inversion syntax (,-1) for affine, and apply in correct order
+    suvr_sitk = sitk.ReadImage(suvr_file)
+    suvr_native_file = os.path.join(output_dir, 'suvr_native.nii.gz')
+    g.execute(f'-threads 1 '
+              f'-rf ref_img '
+              f'-rm moving_img out_img '
+              f'-r {affine_mat},-1 {deform_inv_warp} ',
+              ref_img=native_ref, moving_img=suvr_sitk,
+              out_img=None)
+    sitk.WriteImage(g['out_img'], suvr_native_file)
+
+    # sw_pet to native space
+    sw_pet_file = os.path.join(output_dir, f'{smoothed_prefix}.nii.gz')
+    sw_pet_sitk = sitk.ReadImage(sw_pet_file)
+    sw_pet_native_file = os.path.join(output_dir, 'sw_pet_native.nii.gz')
+    g.execute(f'-threads 1 '
+              f'-rf ref_img '
+              f'-rm moving_img out_img '
+              f'-r {affine_mat},-1 {deform_inv_warp} ',
+              ref_img=native_ref, moving_img=sw_pet_sitk,
+              out_img=None)
+    sitk.WriteImage(g['out_img'], sw_pet_native_file)
+
+    del g
+    gc.collect()
+
     # Save results to CSV
     results = {
         'subjectID': ['sw_pet.nii.gz'],

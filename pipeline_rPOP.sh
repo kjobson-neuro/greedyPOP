@@ -110,9 +110,6 @@ else
         echo "One volume submitted to be processed, co-reg and averaging is assumed to be done."
 fi
     
-# Create binary masks of both the input and reference data
-${FREESURFER_HOME}/bin/mri_synthstrip -i "${rpop_dir}/templates/Template_FBB_all.nii" -m "${work_dir}/temp_mask.nii.gz" -o "${work_dir}/temp_brain.nii.gz"
-
 # Run main script with inputs
 python3 "${exe_dir}/rPOP.py" -pet "${nifti_pet}" -work "${work_dir}" -out "${out_dir}" -rpop "${rpop_dir}" -origin "${oropt}" -tracer "${tracer}" -exe "${exe_dir}" -fs_path "${FREESURFER_HOME}"
 
