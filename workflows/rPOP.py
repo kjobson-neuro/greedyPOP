@@ -101,17 +101,17 @@ def stripped_registration(pet_scan, pet_mask, warptempl, warptempl_mask):
     r_prefix = 'rigid'
     
     # Load the data
-    img_fixed = sitk.ReadImage(warptempl)
-    img_moving = sitk.ReadImage(pet_scan)
-    fixed_mask = sitk.ReadImage(warptempl_mask)
-    moving_mask = sitk.ReadImage(pet_mask)
+    img_fixed = sitk.ReadImage(warptempl, sitk.sitkFloat32)
+    img_moving = sitk.ReadImage(pet_scan, sitk.sitkFloat32)
+    fixed_mask = sitk.ReadImage(warptempl_mask, sitk.sitkFloat32)
+    moving_mask = sitk.ReadImage(pet_mask, sitk.sitkFloat32)
 
     g.execute('-threads 1 '
            ' -i my_fixed my_moving '
            '-ia-image-centers '
            '-gm fmask '
            '-mm mmask ' 
-           '-a -dof 6 -n 200x80x20 -m MI '
+           '-a -dof 6 -n 400x0x0x0 -m NCC 2x2x2 -search 400 5 5 '
            '-o rigid',
            my_fixed = img_fixed, my_moving = img_moving, fmask = fixed_mask, mmask = moving_mask,
            rigid = None)
@@ -125,19 +125,21 @@ def stripped_registration(pet_scan, pet_mask, warptempl, warptempl_mask):
     # Save the images so we can check out if something went wrong    
     rwarped_img = os.path.join(work_dir, f'{r_prefix}.nii.gz')  
     sitk.WriteImage(g['rwarpedimg'], rwarped_img)
-    
+    rigid_mat = os.path.join(work_dir, 'rigid.mat')
+    np.savetxt(rigid_mat, g['rigid'])
+
     # Perform affine registration
     # Change the name to avoid re-writing
     prefix = 'redo_init_reg'
     
-    img_moving = sitk.ReadImage(rwarped_img)
-    fixed_mask = sitk.ReadImage(warptempl_mask)
+    img_moving = sitk.ReadImage(rwarped_img, sitk.sitkFloat32)
+    fixed_mask = sitk.ReadImage(warptempl_mask, sitk.sitkFloat32)
     
     g.execute('-threads 1 '
            ' -i my_fixed my_moving '
            '-ia-image-centers '
            '-gm fmask '
-           '-a -dof 12 -n 100x40x10 -m MI '
+           '-a -dof 12 -n 400x80x40x0 -m NCC 2x2x2 '
            '-o redo_affine', 
            my_fixed = img_fixed, my_moving = img_moving, fmask = fixed_mask,
            redo_affine = None)
@@ -150,10 +152,12 @@ def stripped_registration(pet_scan, pet_mask, warptempl, warptempl_mask):
           
     warped_img = os.path.join(work_dir, f'{prefix}.nii.gz')
     sitk.WriteImage(g['warpedimg'], warped_img)
-    
+    redo_affine_mat = os.path.join(work_dir, 'redo_affine.mat')
+    np.savetxt(redo_affine_mat, g['redo_affine'])
+
     # Load data for full deformed reg
     init_path = os.path.join(work_dir, "redo_init_reg.nii.gz")
-    img_moving_def = sitk.ReadImage(init_path)
+    img_moving_def = sitk.ReadImage(init_path, sitk.sitkFloat32)
 
     # Warp the image to MNI space using Greedy
     # Allowing it to write over the old w_pet image here because it will be cleaner for output and we already know that it had a bad registration
@@ -178,6 +182,13 @@ def stripped_registration(pet_scan, pet_mask, warptempl, warptempl_mask):
           deformedimg = None)
     
     sitk.WriteImage(g['deformedimg'] , deformedimg)
+
+    # Save the warp and create inverse for native space warping
+    redo_deform_warp = os.path.join(work_dir, 'redo_w_pet_warp.nii.gz')
+    sitk.WriteImage(g['redo_deformed'], redo_deform_warp)
+    redo_deform_inv_warp = os.path.join(work_dir, 'redo_w_pet_inverse_warp.nii.gz')
+    g.execute(f'-threads 1 '
+              f'-iw {redo_deform_warp} {redo_deform_inv_warp} ')
 
 # Define the main function
 def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
@@ -236,10 +247,10 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     # Perform affine registration    
     prefix = 'init_reg'
 
-    img_fixed = sitk.ReadImage(warptempl)
-    img_moving = sitk.ReadImage(centered_img)
-    fixed_mask = sitk.ReadImage(temp_mask_path)
-    moving_mask = sitk.ReadImage(centered_mask)
+    img_fixed = sitk.ReadImage(warptempl, sitk.sitkFloat32)
+    img_moving = sitk.ReadImage(centered_img, sitk.sitkFloat32)
+    fixed_mask = sitk.ReadImage(temp_mask_path, sitk.sitkFloat32)
+    moving_mask = sitk.ReadImage(centered_mask, sitk.sitkFloat32)
 
     # Create mat image to save affine transform
     affine_mat = os.path.join(work_dir, f'{prefix}.mat')
@@ -266,7 +277,7 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
 
     # Load data for full deformed reg
     init_path = os.path.join(work_dir, "init_reg.nii.gz")
-    img_moving_def = sitk.ReadImage(init_path)
+    img_moving_def = sitk.ReadImage(init_path, sitk.sitkFloat32)
 
     # Warp the image to template space using Greedy
     full_prefix = 'w_pet'
@@ -460,28 +471,51 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     g = Greedy3D()
     native_ref = sitk.ReadImage(centered_img)
 
+    # Check if redo transforms exist (from stripped_registration)
+    redo_deform_inv_warp = os.path.join(work_dir, 'redo_w_pet_inverse_warp.nii.gz')
+    redo_affine_mat = os.path.join(work_dir, 'redo_affine.mat')
+    rigid_mat = os.path.join(work_dir, 'rigid.mat')
+
     # SUVR to native space (use file paths for warp since vector images not supported in-memory)
     # Use greedy's native inversion syntax (,-1) for affine, and apply in correct order
     suvr_sitk = sitk.ReadImage(suvr_file)
     suvr_native_file = os.path.join(output_dir, 'suvr_native.nii.gz')
-    g.execute(f'-threads 1 '
-              f'-rf ref_img '
-              f'-rm moving_img out_img '
-              f'-r {affine_mat},-1 {deform_inv_warp} ',
-              ref_img=native_ref, moving_img=suvr_sitk,
-              out_img=None)
+    if os.path.exists(redo_deform_inv_warp):
+        # Use redo transforms: rigid -> redo_affine -> redo_deformed
+        g.execute(f'-threads 1 '
+                  f'-rf ref_img '
+                  f'-rm moving_img out_img '
+                  f'-r {rigid_mat},-1 {redo_affine_mat},-1 {redo_deform_inv_warp} ',
+                  ref_img=native_ref, moving_img=suvr_sitk,
+                  out_img=None)
+    else:
+        g.execute(f'-threads 1 '
+                  f'-rf ref_img '
+                  f'-rm moving_img out_img '
+                  f'-r {affine_mat},-1 {deform_inv_warp} ',
+                  ref_img=native_ref, moving_img=suvr_sitk,
+                  out_img=None)
     sitk.WriteImage(g['out_img'], suvr_native_file)
 
     # sw_pet to native space
     sw_pet_file = os.path.join(output_dir, f'{smoothed_prefix}.nii.gz')
     sw_pet_sitk = sitk.ReadImage(sw_pet_file)
     sw_pet_native_file = os.path.join(output_dir, 'sw_pet_native.nii.gz')
-    g.execute(f'-threads 1 '
-              f'-rf ref_img '
-              f'-rm moving_img out_img '
-              f'-r {affine_mat},-1 {deform_inv_warp} ',
-              ref_img=native_ref, moving_img=sw_pet_sitk,
-              out_img=None)
+    if os.path.exists(redo_deform_inv_warp):
+        # Use redo transforms: rigid -> redo_affine -> redo_deformed
+        g.execute(f'-threads 1 '
+                  f'-rf ref_img '
+                  f'-rm moving_img out_img '
+                  f'-r {rigid_mat},-1 {redo_affine_mat},-1 {redo_deform_inv_warp} ',
+                  ref_img=native_ref, moving_img=sw_pet_sitk,
+                  out_img=None)
+    else:
+        g.execute(f'-threads 1 '
+                  f'-rf ref_img '
+                  f'-rm moving_img out_img '
+                  f'-r {affine_mat},-1 {deform_inv_warp} ',
+                  ref_img=native_ref, moving_img=sw_pet_sitk,
+                  out_img=None)
     sitk.WriteImage(g['out_img'], sw_pet_native_file)
 
     del g
@@ -513,7 +547,13 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     csv_file = os.path.join(output_dir, f'pyPOP_{datetime.now().strftime("%m-%d-%Y_%H-%M-%S")}.csv')
     df.to_csv(csv_file, index=False)
 
-    print("\nPYrPOP just finished! Warped and differentially smoothed AC PET images were generated.")
+    # Force flush to disk - critical for cluster filesystems
+    subprocess.run(['sync'], check=False)
+
+    if not os.path.exists(csv_file):
+        raise RuntimeError(f"CSV file was not created at {csv_file}")
+
+    print("\ngreedyPOP just finished! Warped and differentially smoothed AC PET images were generated.")
     print("Lookup the .csv database to assess FWHM estimations and filters applied.\n")
 
 # Execute:

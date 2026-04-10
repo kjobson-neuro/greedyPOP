@@ -53,10 +53,10 @@ docker build -t greedypop:latest .
 ### Docker
 
 ```bash
-docker run -v /path/to/data:/data \
+docker run -v /path/to/data:/flywheel/v0/input \
            -v /path/to/output:/flywheel/v0/output \
            -v /path/to/work:/flywheel/v0/work \
-           kjobson/greedypop:0.2.0 \
+           greedypop:0.2.0 \
            -a /data/pet_scan.nii.gz \
            -r Florbetaben \
            -o Keep
@@ -70,7 +70,6 @@ docker run -v /path/to/data:/data \
 | `-r` | Tracer type (required) | `Florbetapir`, `Florbetaben`, `Flutemetamol` |
 | `-o` | Origin setting | `Keep` (default), `Reset` |
 | `-v` | Verbose mode | (flag only) |
-| `-n` | Dry run mode | (flag only) |
 
 ### Flag Details
 

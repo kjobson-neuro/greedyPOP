@@ -10,16 +10,19 @@
 
 # Load config or inputs manually
 CmdName=$(basename "$0")
-Syntax="${CmdName} [-a PETdata][-o Origin][-t Template][-r Tracer][-v]"
+Syntax="${CmdName} [-a PETdata] [-o Origin] [-r Tracer] [-v]"
 function sys {
         [ -n "${opt_n}${opt_v}" ] && echo "$@" 1>&2
         [ -n "$opt_n" ] || "$@"
-} 
-while getopts a:c:i:m:ntv arg
+}
+while getopts a:c:o:r:nv arg
 do
-        case "$arg" in 
-                a|v|t|r|o)
-                        eval "opt_${arg}='${OPTARG:=1}'"
+        case "$arg" in
+                a|c|o|r)
+                        eval "opt_${arg}='${OPTARG}'"
+                        ;;
+                n|v)
+                        eval "opt_${arg}=1"
                         ;;
         esac
 done
@@ -99,8 +102,8 @@ elif file "$petdata" | grep -q 'Zip archive data'; then
         nifti_pet=("${dcm_dir}"/*.nii "${dcm_dir}"/*.nii.gz)
 fi
 
-vols=$(${FREESURFER_HOME}/bin/mri_info --dim "${nifti_pet}")
-if [[ ${vols[-1]} -gt 1 ]]; then
+num_vols=$(${FREESURFER_HOME}/bin/mri_info --nframes "${nifti_pet}")
+if [[ "${num_vols}" -gt 1 ]]; then
 	# Data is a series and needs to be processed
         mcflirt -in "${nifti_pet}" -out "${work_dir}/mc_pet.nii.gz"
         pet_av="${work_dir}/pet_av.nii.gz"
@@ -130,4 +133,15 @@ itksnap-wt \
     -layers-add-anat "${out_dir}/sw_pet.nii.gz" -tags-add "Smoothed_PET" \
     -layers-add-seg "${voi_dir}/voi_ctx_2mm.nii" -tags-add "Cortex" \
     -o "${out_dir}/greedyPOP.itksnap"
+
+# Force filesystem sync and verify outputs exist
+sync
+if [ ! -f "${out_dir}/suvr.nii.gz" ]; then
+    echo "ERROR: suvr.nii.gz not found in output directory" >&2
+    exit 1
+fi
+if ! ls "${out_dir}"/*.csv 1>/dev/null 2>&1; then
+    echo "ERROR: No CSV files found in output directory" >&2
+    exit 1
+fi
 
