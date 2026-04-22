@@ -62,6 +62,11 @@ else
         Tracer=$( jq '.config.tracer' "$ConfigJsonFile" | tr -d '"' )
 fi
 
+# Default resolution to 6mm if not set via command line or config
+if [ -z "$Resolution" ] || [ "$Resolution" == "null" ]; then
+        Resolution="Six"
+fi
+
 ### Data Preprocessing
 # Set up data paths
 flywheel='/flywheel/v0'
