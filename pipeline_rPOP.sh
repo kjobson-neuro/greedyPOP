@@ -10,15 +10,15 @@
 
 # Load config or inputs manually
 CmdName=$(basename "$0")
-Syntax="${CmdName} [-a PETdata] [-o Origin] [-r Tracer] [-v]"
+Syntax="${CmdName} [-a PETdata] [-o Origin] [-t Tracer] [-r Resolution ][-v]"
 function sys {
         [ -n "${opt_n}${opt_v}" ] && echo "$@" 1>&2
         [ -n "$opt_n" ] || "$@"
 }
-while getopts a:c:o:r:nv arg
+while getopts a:c:o:t:r:nv arg
 do
         case "$arg" in
-                a|c|o|r)
+                a|c|o|t|r)
                         eval "opt_${arg}='${OPTARG}'"
                         ;;
                 n|v)
@@ -49,6 +49,13 @@ if [ -n "$opt_o" ]; then
 else
         Origin=$( jq '.config.origin' "$ConfigJsonFile" | tr -d '"' )
 fi
+
+if [ -n "$opt_t" ]; then
+        Resolution="$opt_t"
+else
+        Resolution=$( jq '.config.resolution' "$ConfigJsonFile" | tr -d '"' )
+fi
+
 if [ -n "$opt_r" ]; then
         Tracer="$opt_r"
 else
@@ -88,6 +95,18 @@ case "$Tracer" in
 		tracer=3
 		;;
 esac
+echo "Resolution is: $Resolution"
+case "$Resolution" in
+        Six)   
+                res=6
+                ;;
+        Eight)
+                res=8
+                ;;
+        Ten)
+                res=10
+                ;;
+esac
 
 #We need to check out whether or not there are multiple volumes - multiple volumes means we need to pre-process things
 
@@ -114,7 +133,7 @@ else
 fi
     
 # Run main script with inputs
-python3 "${exe_dir}/rPOP.py" -pet "${nifti_pet}" -work "${work_dir}" -out "${out_dir}" -rpop "${rpop_dir}" -origin "${oropt}" -tracer "${tracer}" -exe "${exe_dir}" -fs_path "${FREESURFER_HOME}"
+python3 "${exe_dir}/rPOP.py" -pet "${nifti_pet}" -work "${work_dir}" -out "${out_dir}" -rpop "${rpop_dir}" -origin "${oropt}" -tracer "${tracer}" -exe "${exe_dir}" -fs_path "${FREESURFER_HOME}" -res "${res}"
 
 suvr="${out_dir}/suvr.nii.gz"
 list=("voi_CerebGry_2mm" "voi_ctx_2mm" "voi_Pons_2mm" "voi_WhlCbl_2mm" "voi_WhlCblBrnStm_2mm")
@@ -122,16 +141,20 @@ list=("voi_CerebGry_2mm" "voi_ctx_2mm" "voi_Pons_2mm" "voi_WhlCbl_2mm" "voi_WhlC
 # Get visualizations
 python3 "${exe_dir}/viz.py" -pet "${suvr}" -mask "${work_dir}/w_pet_mask.nii.gz" -out "${out_dir}" -seg_folder "${rpop_dir}/Centiloid_Std_VOI/nifti/2mm/" -seg "${list[@]}"
 
+voi_dir="${rpop_dir}/Centiloid_Std_VOI/nifti/1mm"
+
 # Create ITK-SNAP workspace for interactive visualization
 # To add more images later, use:
 #   itksnap-wt -i "${out_dir}/greedyPOP.itksnap" -layers-add-anat <image.nii.gz> -o "${out_dir}/greedyPOP.itksnap"
 #   itksnap-wt -i "${out_dir}/greedyPOP.itksnap" -layers-add-seg <segmentation.nii.gz> -o "${out_dir}/greedyPOP.itksnap"
 voi_dir="${rpop_dir}/Centiloid_Std_VOI/nifti/2mm"
 
+# Build workspace with one segmentation and cortex as overlay
 itksnap-wt \
+    -layers-add-seg "${out_dir}/voi_WhlCbl.nii.gz" -tags-add "Whole_Cerebellum" \
+    -layers-add-anat "${out_dir}/voi_ctx.nii.gz" -tags-add "Cortex" \
     -layers-set-main "${out_dir}/suvr.nii.gz" -tags-add "SUVR" \
     -layers-add-anat "${out_dir}/sw_pet.nii.gz" -tags-add "Smoothed_PET" \
-    -layers-add-seg "${voi_dir}/voi_ctx_2mm.nii" -tags-add "Cortex" \
     -o "${out_dir}/greedyPOP.itksnap"
 
 # Force filesystem sync and verify outputs exist

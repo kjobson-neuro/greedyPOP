@@ -1,7 +1,8 @@
 {
     "config": {
         "origin": "Keep",
-        "tracer": "Florbetaben"
+        "tracer": "Florbetaben",
+        "resolution": "Six"
     },
     "inputs": {
         "petdata": {

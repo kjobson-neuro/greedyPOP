@@ -32,6 +32,7 @@ parser.add_argument('-tracer', type=int, help="Which tracer?")
 parser.add_argument('-out', type=str, help="The path to the output directory.")
 parser.add_argument('-exe', type=str, help="The path to the directory with executable scripts.")
 parser.add_argument('-fs_path', type=str, help="The path to FREESURFER_HOME.")
+parser.add_argument('-res', type=int, help="Target resolution of the PET scan in template space")
 args = parser.parse_args()
 
 # Load the global input options
@@ -97,7 +98,19 @@ def stripped_registration(pet_scan, pet_mask, warptempl, warptempl_mask):
     # Do registration after skullstripping - keeping the rigid registration and onwards
     g = Greedy3D()    
 
-    # Rigid registration
+    warptempl_fbp = os.path.join(temp_dir, 'Template_FBP_all_brain.nii.gz')
+    warptempl_fbb = os.path.join(temp_dir, 'Template_FBB_all_brain.nii.gz')
+    warptempl_flute = os.path.join(temp_dir, 'Template_FLUTE_all_brain.nii.gz')
+
+    # Template choice   
+    if tracer == 1:
+        warptempl = warptempl_fbp
+    elif tracer == 2:
+        warptempl = warptempl_fbb
+    elif tracer == 3:
+        warptempl = warptempl_flute 
+
+   # Rigid registration
     r_prefix = 'rigid'
     
     # Load the data
@@ -323,6 +336,7 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
         print(f"Dice score was {dice_score_masks}, continuing to AFNI smoothing.")
     else:
         # This function overwrites the w_pet image so we don't have to change anything moving forward
+        print(f"Dice score was {dice_score_masks}, redoing registration.")
         stripped_registration(centered_img, centered_mask, warptempl, temp_mask_path)        
         redo_origin_deformed = os.path.join(work_dir, 'w_pet.nii.gz')
         redo_w_pet_mask = os.path.join(work_dir, 'w_pet_mask.nii.gz')
@@ -360,9 +374,21 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     # Extract only the first row for old FWHM calc
     fwhm_x, fwhm_y, fwhm_z = fwhm_data[0, 0:3]
 
+    resolution = args.res
+
     # Calculate smoothing filters
-    def calc_filter(fwhm):
-        return np.sqrt(max(0, 10**2 - fwhm**2)) if fwhm < 10 else 0
+    if resolution == 6:
+        def calc_filter(fwhm):
+            return np.sqrt(max(0, 6**2 - fwhm**2)) if fwhm < 6 else 0
+    elif resolution == 8:
+        def calc_filter(fwhm):
+            return np.sqrt(max(0, 8**2 - fwhm**2)) if fwhm < 8 else 0
+    elif resolution == 10:
+        def calc_filter(fwhm):
+            return np.sqrt(max(0, 10**2 - fwhm**2)) if fwhm < 10 else 0
+    else:
+        print(f"Effective resolution not set - please choose either 6, 8 or 10mm for target resolution of PET scan in template space.")
+        sys.exit()
 
     filter_x = calc_filter(fwhm_x)
     filter_y = calc_filter(fwhm_y)
@@ -403,6 +429,13 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     pons_resamp = resample_to_img(pons_img, smoothed_img, interpolation="nearest", copy_header=True)
     wcbs_resamp = resample_to_img(wcbs_img, smoothed_img, interpolation="nearest", copy_header=True)
 
+    ctx_out = os.path.join(output_dir, 'voi_ctx.nii.gz')
+    wc_out = os.path.join(output_dir, 'voi_WhlCbl.nii.gz')
+
+    # save data for later
+    nb.save(ctx_resamp, ctx_out)
+    nb.save(wc_resamp, wc_out)
+
     avg_ctx_voi_bin = masked_mean_from_disk(smoothed_img, ctx_resamp)
     avg_wc_voi_bin  = masked_mean_from_disk(smoothed_img, wc_resamp)
     avg_wcgm_voi_bin  = masked_mean_from_disk(smoothed_img, wcgm_resamp)
@@ -410,7 +443,7 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     avg_wcbs_voi_bin  = masked_mean_from_disk(smoothed_img, wcbs_resamp)
 
     if not np.isfinite(avg_wc_voi_bin) or avg_wc_voi_bin == 0:
-    	raise ValueError("Reference mask is empty or zero — cannot compute SUVR.")
+        raise ValueError("Reference mask is empty or zero — cannot compute SUVR.")
     neoSUVR_wc = float(avg_ctx_voi_bin / avg_wc_voi_bin)
     neoSUVR_wcgm = float(avg_ctx_voi_bin / avg_wcgm_voi_bin)
     neoSUVR_pons = float(avg_ctx_voi_bin / avg_pons_voi_bin)
@@ -544,7 +577,7 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     import pandas as pd
     print(results)
     df = pd.DataFrame(results)
-    csv_file = os.path.join(output_dir, f'pyPOP_{datetime.now().strftime("%m-%d-%Y_%H-%M-%S")}.csv')
+    csv_file = os.path.join(output_dir, f'greedyPOP_{datetime.now().strftime("%m-%d-%Y_%H-%M-%S")}.csv')
     df.to_csv(csv_file, index=False)
 
     # Force flush to disk - critical for cluster filesystems
