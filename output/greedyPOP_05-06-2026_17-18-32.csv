@@ -1,2 +1,0 @@
-subjectID,avg_ctx_voi_bin,avg_wc_voi_bin,WhlCbl_NeocorticalSUVR,WhlCbl_Centiloid,CerebGry_NeocorticalSUVR,CerebGry_Centiloid,Pons_NeocorticalSUVR,Pons_Centiloid,WhlCblBrnStm_NeocorticalSUVR,WhlCblBrnStm_Centiloid,EstimatedFWHMx,EstimatedFWHMy,EstimatedFWHMz,FWHMfilterappliedx,FWHMfilterappliedy,FWHMfilterappliedz
-sw_pet.nii.gz,1.459834238875114,1.405464928801289,1.0386842168450237,-2.283446353004706,1.3102529898438804,41.35765546791157,0.6465709346817423,-65.29605079664401,0.9488048818573728,-16.727055485520196,7.32767,7.49681,8.41368,0,0,0
