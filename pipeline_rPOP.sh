@@ -51,20 +51,36 @@ else
 fi
 
 if [ -n "$opt_t" ]; then
-        Resolution="$opt_t"
+        Tracer="$opt_t"
 else
-        Resolution=$( jq '.config.resolution' "$ConfigJsonFile" | tr -d '"' )
+        Tracer=$( jq '.config.tracer' "$ConfigJsonFile" | tr -d '"' )
 fi
 
 if [ -n "$opt_r" ]; then
-        Tracer="$opt_r"
+        Resolution="$opt_r"
 else
-        Tracer=$( jq '.config.tracer' "$ConfigJsonFile" | tr -d '"' )
+        Resolution=$( jq '.config.resolution' "$ConfigJsonFile" | tr -d '"' )
 fi
 
 # Default resolution to 6mm if not set via command line or config
 if [ -z "$Resolution" ] || [ "$Resolution" == "null" ]; then
         Resolution="Six"
+fi
+
+# Validate required inputs
+if [ -z "$petdata" ] || [ "$petdata" == "null" ]; then
+	echo "ERROR: PET data path not specified. Use -a <path> or provide config.json" >&2
+	exit 1
+fi
+
+if [ ! -e "$petdata" ]; then
+	echo "ERROR: PET data file not found: $petdata" >&2
+	exit 1
+fi
+
+if [ -z "$Tracer" ] || [ "$Tracer" == "null" ]; then
+	echo "ERROR: Tracer not specified. Use -t <Florbetapir|Florbetaben|Flutemetamol>" >&2
+	exit 1
 fi
 
 ### Data Preprocessing
@@ -79,39 +95,66 @@ dcm_dir='/flywheel/v0/work/dcm'
 
 mkdir -p "$flywheel" "$rpop_dir" "$data_dir" "$out_dir" "$work_dir" "$exe_dir" "$dcm_dir"
 
-# Now we need to clean and pass the data to the main script
-echo "$Origin origin set."
-if [ "$Origin" == "Keep" ]
-then
-	oropt=1
-else
-	oropt=2
-fi
+# Validate and convert Origin to numeric value
+echo "Origin setting: $Origin"
+case "$Origin" in
+	Keep|keep|1)
+		oropt=1
+		echo "Keeping original origin"
+		;;
+	Reset|reset|2)
+		oropt=2
+		echo "Resetting origin to center"
+		;;
+	*)
+		echo "ERROR: Invalid origin '$Origin'. Must be one of: Keep, Reset" >&2
+		exit 1
+		;;
+esac
 
+# Validate and convert Tracer to numeric value
 echo "Tracer is: $Tracer"
 case "$Tracer" in
-	Florbetapir)
+	Florbetapir|FBP|fbp)
 		tracer=1
 		;;
-	Florbetaben)
+	Florbetaben|FBB|fbb)
 		tracer=2
 		;;
-	Flutemetamol)
+	Flutemetamol|FLUTE|flute)
 		tracer=3
 		;;
+	*)
+		echo "ERROR: Invalid tracer '$Tracer'. Must be one of: Florbetapir, Florbetaben, Flutemetamol" >&2
+		exit 1
+		;;
 esac
+
+# Validate and convert Resolution to numeric value
 echo "Resolution is: $Resolution"
 case "$Resolution" in
-        Six)   
+        Six|six|6)
                 res=6
                 ;;
-        Eight)
+        Eight|eight|8)
                 res=8
                 ;;
-        Ten)
+        Ten|ten|10)
                 res=10
                 ;;
+	*)
+		echo "ERROR: Invalid resolution '$Resolution'. Must be one of: Six, Eight, Ten (or 6, 8, 10)" >&2
+		exit 1
+		;;
 esac
+
+# Verify values are set before proceeding
+if [ -z "$tracer" ] || [ -z "$res" ]; then
+	echo "ERROR: tracer ($tracer) or res ($res) not properly set" >&2
+	exit 1
+fi
+
+echo "Using tracer=$tracer, res=$res"
 
 #We need to check out whether or not there are multiple volumes - multiple volumes means we need to pre-process things
 
