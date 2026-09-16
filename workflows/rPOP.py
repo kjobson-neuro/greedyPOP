@@ -332,12 +332,12 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     
     # Check if the masks overlap more than .9
     dice_score_masks= dice_score(w_pet_mask, temp_mask_path)
-    if dice_score_masks > 90:
+    if dice_score_masks > 80:
         print(f"Dice score was {dice_score_masks}, continuing to AFNI smoothing.")
     else:
         # This function overwrites the w_pet image so we don't have to change anything moving forward
         print(f"Dice score was {dice_score_masks}, redoing registration.")
-        stripped_registration(centered_img, centered_mask, warptempl, temp_mask_path)        
+        stripped_registration(centered_output, centered_mask, warptempl, temp_mask_path)        
         redo_origin_deformed = os.path.join(work_dir, 'w_pet.nii.gz')
         redo_w_pet_mask = os.path.join(work_dir, 'w_pet_mask.nii.gz')
         redo_w_pet_brain = os.path.join(work_dir, 'w_pet_brain.nii.gz')
@@ -348,7 +348,7 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
             check=True
             )    
         dice_score_stripped = dice_score(w_pet_mask, temp_mask_path)
-        if dice_score_stripped > 90:
+        if dice_score_stripped > 80:
             print(f"Dice score is sufficient with skull-stripped registration: {dice_score_masks}")
             print("Continuing with smoothing, SUVR and centiloid calculations.")
         else:
@@ -477,9 +477,9 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
         FLUTECL_wcbs = ((127.6 * neoSUVR_wcbs) - 136.2)
         centiloid_wcbs = FLUTECL_wcbs
 
-    # Create SUVR image
-    suv_temp = os.path.join(work_dir, 'w_pet_brain.nii.gz')
-    suv_data = nb.load(suv_temp)   
+    # Create SUVR image from smoothed data
+    # Use the smoothed image (sw_pet) so SUVR is computed AFTER smoothing
+    suv_data = smoothed_img
 
     # Calculate cerebellum mean using your slice-by-slice function
     wc_mean = masked_mean_from_disk(suv_data, wc_resamp)  

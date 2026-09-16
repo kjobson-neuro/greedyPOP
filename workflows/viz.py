@@ -16,6 +16,23 @@ import matplotlib.image as mpimg
 import numpy as np
 from scipy import ndimage
 
+def crop_black_borders(img, threshold=0.15, padding=5):
+    """Crop black borders from an image, keeping a small padding."""
+    if img.ndim == 3:
+        # Use max across RGB to detect any non-black content
+        gray = np.max(img[:, :, :3], axis=2)
+    else:
+        gray = img
+    rows = np.any(gray > threshold, axis=1)
+    cols = np.any(gray > threshold, axis=0)
+    rmin, rmax = np.where(rows)[0][[0, -1]]
+    cmin, cmax = np.where(cols)[0][[0, -1]]
+    rmin = max(0, rmin - padding)
+    rmax = min(img.shape[0], rmax + padding)
+    cmin = max(0, cmin - padding)
+    cmax = min(img.shape[1], cmax + padding)
+    return img[rmin:rmax, cmin:cmax]
+
 parser = argparse.ArgumentParser(description='Take processed images and create visualizations.')
 
 # Set up parser for the CBF file and output directory
@@ -59,6 +76,22 @@ masked_img = nb.Nifti1Image(masked_data, affine=pet_nii.affine, header=pet_nii.h
 seg_folder = args.seg_folder
 seg_list = args.seg
 
+# Load cerebellar reference ROI (WhlCbl) for combined visualizations
+whlcbl_ref_file = os.path.join(seg_folder, 'voi_WhlCbl_2mm.nii')
+whlcbl_ref_nii = None
+whlcbl_ref_outline_nii = None
+if os.path.exists(whlcbl_ref_file):
+    whlcbl_ref_nii = nb.load(whlcbl_ref_file)
+    whlcbl_ref_data = whlcbl_ref_nii.get_fdata()
+    whlcbl_ref_binary = whlcbl_ref_data > 0
+    whlcbl_ref_eroded = ndimage.binary_erosion(whlcbl_ref_binary, iterations=1)
+    whlcbl_ref_outline = (whlcbl_ref_binary.astype(np.float32) - whlcbl_ref_eroded.astype(np.float32))
+    whlcbl_ref_outline_nii = nb.Nifti1Image(whlcbl_ref_outline, affine=whlcbl_ref_nii.affine, header=whlcbl_ref_nii.header)
+
+# Create colormaps for ROI visualization
+cyan_cmap = ListedColormap(['black', 'cyan'])  # For cerebellar reference
+red_cmap = ListedColormap(['black', 'red'])    # For target ROI
+
 for i in seg_list:
     seg_file = os.path.join(seg_folder, i + '.nii')
     seg_nii = nb.load(seg_file)
@@ -81,29 +114,43 @@ for i in seg_list:
         output_file=os.path.join(outputdir, seg + "_SUVR_mosaic_prism.png"))
 
     # Combined view: 25 axial slices (5x5 grid) on left, sagittal + coronal stacked on right
-    # Save temporary images for each view (using outline mask)
+    # Shows both target ROI (red) and cerebellar reference (cyan)
+
+    # Create a combined labeled mask: 1 = cerebellar ref (cyan), 2 = target ROI (red)
+    is_whlcbl = 'WhlCbl' in seg
+    if whlcbl_ref_outline_nii is not None and not is_whlcbl:
+        # Combine both outlines into one labeled image
+        combined_outline = np.zeros_like(outline_data)
+        combined_outline[whlcbl_ref_outline > 0] = 1  # Cerebellar = 1 (cyan)
+        combined_outline[outline_data > 0] = 2        # Target ROI = 2 (red), overwrites overlap
+        combined_outline_nii = nb.Nifti1Image(combined_outline, affine=seg_nii.affine, header=seg_nii.header)
+        # Colormap: 0=transparent, 1=cyan, 2=red
+        combined_cmap = ListedColormap(['black', 'cyan', 'red'])
+    else:
+        # Just the target ROI
+        combined_outline_nii = outline_nii
+        combined_cmap = red_cmap
+
     tmp_axial = os.path.join(outputdir, "_tmp_axial.png")
-    tmp_sagittal = os.path.join(outputdir, "_tmp_sagittal.png")
-    tmp_coronal = os.path.join(outputdir, "_tmp_coronal.png")
+    tmp_sag = os.path.join(outputdir, "_tmp_sag.png")
+    tmp_cor = os.path.join(outputdir, "_tmp_cor.png")
 
-    # Generate 25 axial slices (will be a horizontal strip)
-    nilearn.plotting.plot_roi(outline_nii, masked_img, display_mode='z', black_bg=True, alpha=1.0, cmap="jet", draw_cross=False,
-        cut_coords=25, title=f"SUVR_{seg}", output_file=tmp_axial)
-
-    nilearn.plotting.plot_roi(outline_nii, masked_img, display_mode='x', black_bg=True, alpha=1.0, cmap="jet", draw_cross=False,
-        cut_coords=1, output_file=tmp_sagittal)
-
-    nilearn.plotting.plot_roi(outline_nii, masked_img, display_mode='y', black_bg=True, alpha=1.0, cmap="jet", draw_cross=False,
-        cut_coords=1, output_file=tmp_coronal)
+    # Generate slices with combined ROI mask
+    nilearn.plotting.plot_roi(combined_outline_nii, masked_img, display_mode='z', black_bg=True, alpha=1.0, cmap=combined_cmap, draw_cross=False,
+        cut_coords=25, colorbar=False, output_file=tmp_axial)
+    nilearn.plotting.plot_roi(combined_outline_nii, masked_img, display_mode='x', black_bg=True, alpha=1.0, cmap=combined_cmap, draw_cross=False,
+        cut_coords=[5], colorbar=False, annotate=False, output_file=tmp_sag)
+    nilearn.plotting.plot_roi(combined_outline_nii, masked_img, display_mode='y', black_bg=True, alpha=1.0, cmap=combined_cmap, draw_cross=False,
+        cut_coords=1, colorbar=False, annotate=False, output_file=tmp_cor)
 
     # Load images
-    img_axial_strip = mpimg.imread(tmp_axial)
-    img_sagittal = mpimg.imread(tmp_sagittal)
-    img_coronal = mpimg.imread(tmp_coronal)
+    img_axial_combined = mpimg.imread(tmp_axial)
+    img_sag_combined = crop_black_borders(mpimg.imread(tmp_sag))
+    img_cor_combined = crop_black_borders(mpimg.imread(tmp_cor))
 
     # Reshape axial strip into 5x5 grid (5 rows of 5 slices)
     # The strip contains 25 slices in a row; split into 5 equal parts and stack vertically
-    strip_width = img_axial_strip.shape[1]
+    strip_width = img_axial_combined.shape[1]
     slice_width = strip_width // 25
     rows = []
     for row_idx in range(5):
@@ -111,31 +158,42 @@ for i in seg_list:
         end_slice = start_slice + 5
         start_px = start_slice * slice_width
         end_px = end_slice * slice_width
-        row_img = img_axial_strip[:, start_px:end_px, :]
+        row_img = img_axial_combined[:, start_px:end_px, :]
         rows.append(row_img)
     img_axial_grid = np.vstack(rows)
 
-    # Create figure with layout: axial grid on left (5 cols), sagittal+coronal stacked on right (1 col)
-    fig = plt.figure(figsize=(20, 12), facecolor='black')
-    gs = GridSpec(2, 2, figure=fig, width_ratios=[5, 1], hspace=0.05, wspace=0.05)
+    # Create figure with layout: axial grid on left, sagittal+coronal stacked on right
+    # Using width_ratios=[3, 2] to give more space to sagittal/coronal views
+    fig = plt.figure(figsize=(24, 14), facecolor='black')
+    gs = GridSpec(2, 2, figure=fig, width_ratios=[3, 2], hspace=0.02, wspace=0.02)
 
     # Left: axial grid (spans both rows)
     ax1 = fig.add_subplot(gs[:, 0])
     ax1.imshow(img_axial_grid)
     ax1.set_facecolor('black')
     ax1.axis('off')
+    # Shrink each axes box to its image's aspect ratio so no black padding is
+    # added, then anchor: grid to the right edge of the left column ('E'),
+    # sagittal/coronal to the left edge of the right column ('W'). This removes
+    # the blank space between the axial grid and the sagittal/coronal views.
+    ax1.set_box_aspect(img_axial_grid.shape[0] / img_axial_grid.shape[1])
+    ax1.set_anchor('E')
 
-    # Top right: sagittal
+    # Top right: sagittal (5 slices stacked)
     ax2 = fig.add_subplot(gs[0, 1])
-    ax2.imshow(img_sagittal)
+    ax2.imshow(img_sag_combined)
     ax2.set_facecolor('black')
     ax2.axis('off')
+    ax2.set_box_aspect(img_sag_combined.shape[0] / img_sag_combined.shape[1])
+    ax2.set_anchor('W')
 
-    # Bottom right: coronal
+    # Bottom right: coronal (5 slices stacked)
     ax3 = fig.add_subplot(gs[1, 1])
-    ax3.imshow(img_coronal)
+    ax3.imshow(img_cor_combined)
     ax3.set_facecolor('black')
     ax3.axis('off')
+    ax3.set_box_aspect(img_cor_combined.shape[0] / img_cor_combined.shape[1])
+    ax3.set_anchor('W')
 
     combined_path = os.path.join(outputdir, seg + "_SUVR_combined.png")
     fig.savefig(combined_path, facecolor='black', dpi=150, bbox_inches='tight', pad_inches=0.1)
@@ -143,8 +201,8 @@ for i in seg_list:
 
     # Clean up temporary files
     os.remove(tmp_axial)
-    os.remove(tmp_sagittal)
-    os.remove(tmp_coronal)
+    os.remove(tmp_sag)
+    os.remove(tmp_cor)
 
 # Combined WhlCbl + ctx visualization with different colors
 whlcbl_file = os.path.join(seg_folder, 'voi_WhlCbl_2mm.nii')
@@ -159,65 +217,37 @@ if os.path.exists(whlcbl_file) and os.path.exists(ctx_file):
     whlcbl_binary = whlcbl_data > 0
     whlcbl_eroded = ndimage.binary_erosion(whlcbl_binary, iterations=1)
     whlcbl_outline = (whlcbl_binary.astype(np.float32) - whlcbl_eroded.astype(np.float32))
-    whlcbl_outline_nii = nb.Nifti1Image(whlcbl_outline, affine=whlcbl_nii.affine, header=whlcbl_nii.header)
 
     ctx_data = ctx_nii.get_fdata()
     ctx_binary = ctx_data > 0
     ctx_eroded = ndimage.binary_erosion(ctx_binary, iterations=1)
     ctx_outline = (ctx_binary.astype(np.float32) - ctx_eroded.astype(np.float32))
-    ctx_outline_nii = nb.Nifti1Image(ctx_outline, affine=ctx_nii.affine, header=ctx_nii.header)
 
-    # Create colormaps for each ROI (solid colors)
-    cyan_cmap = ListedColormap(['black', 'cyan'])
-    red_cmap = ListedColormap(['black', 'red'])
+    # Create combined labeled mask: 1 = WhlCbl (cyan), 2 = ctx (red)
+    combined_outline = np.zeros_like(whlcbl_outline)
+    combined_outline[whlcbl_outline > 0] = 1  # WhlCbl = 1 (cyan)
+    combined_outline[ctx_outline > 0] = 2      # ctx = 2 (red), overwrites overlap
+    combined_outline_nii = nb.Nifti1Image(combined_outline, affine=whlcbl_nii.affine, header=whlcbl_nii.header)
 
-    # Generate temporary images for each ROI with different colors
-    tmp_axial_whlcbl = os.path.join(outputdir, "_tmp_axial_whlcbl.png")
-    tmp_axial_ctx = os.path.join(outputdir, "_tmp_axial_ctx.png")
-    tmp_sag_whlcbl = os.path.join(outputdir, "_tmp_sag_whlcbl.png")
-    tmp_sag_ctx = os.path.join(outputdir, "_tmp_sag_ctx.png")
-    tmp_cor_whlcbl = os.path.join(outputdir, "_tmp_cor_whlcbl.png")
-    tmp_cor_ctx = os.path.join(outputdir, "_tmp_cor_ctx.png")
+    # Colormap: 0=transparent, 1=cyan, 2=red
+    combined_cmap = ListedColormap(['black', 'cyan', 'red'])
 
-    # Axial slices - WhlCbl (cyan) and ctx (red)
-    nilearn.plotting.plot_roi(whlcbl_outline_nii, masked_img, display_mode='z', black_bg=True, alpha=1.0, cmap=cyan_cmap, draw_cross=False,
-        cut_coords=25, title="WhlCbl + ctx", output_file=tmp_axial_whlcbl)
-    nilearn.plotting.plot_roi(ctx_outline_nii, masked_img, display_mode='z', black_bg=True, alpha=1.0, cmap=red_cmap, draw_cross=False,
-        cut_coords=25, output_file=tmp_axial_ctx)
+    tmp_axial = os.path.join(outputdir, "_tmp_axial_whlcbl_ctx.png")
+    tmp_sag = os.path.join(outputdir, "_tmp_sag_whlcbl_ctx.png")
+    tmp_cor = os.path.join(outputdir, "_tmp_cor_whlcbl_ctx.png")
 
-    # Sagittal slices
-    nilearn.plotting.plot_roi(whlcbl_outline_nii, masked_img, display_mode='x', black_bg=True, alpha=1.0, cmap=cyan_cmap, draw_cross=False,
-        cut_coords=1, output_file=tmp_sag_whlcbl)
-    nilearn.plotting.plot_roi(ctx_outline_nii, masked_img, display_mode='x', black_bg=True, alpha=1.0, cmap=red_cmap, draw_cross=False,
-        cut_coords=1, output_file=tmp_sag_ctx)
+    # Generate slices with combined ROI mask
+    nilearn.plotting.plot_roi(combined_outline_nii, masked_img, display_mode='z', black_bg=True, alpha=1.0, cmap=combined_cmap, draw_cross=False,
+        cut_coords=25, colorbar=False, output_file=tmp_axial)
+    nilearn.plotting.plot_roi(combined_outline_nii, masked_img, display_mode='x', black_bg=True, alpha=1.0, cmap=combined_cmap, draw_cross=False,
+        cut_coords=[5], colorbar=False, annotate=False, output_file=tmp_sag)
+    nilearn.plotting.plot_roi(combined_outline_nii, masked_img, display_mode='y', black_bg=True, alpha=1.0, cmap=combined_cmap, draw_cross=False,
+        cut_coords=1, colorbar=False, annotate=False, output_file=tmp_cor)
 
-    # Coronal slices
-    nilearn.plotting.plot_roi(whlcbl_outline_nii, masked_img, display_mode='y', black_bg=True, alpha=1.0, cmap=cyan_cmap, draw_cross=False,
-        cut_coords=1, output_file=tmp_cor_whlcbl)
-    nilearn.plotting.plot_roi(ctx_outline_nii, masked_img, display_mode='y', black_bg=True, alpha=1.0, cmap=red_cmap, draw_cross=False,
-        cut_coords=1, output_file=tmp_cor_ctx)
-
-    # Load and composite images (overlay ctx on whlcbl)
-    img_axial_whlcbl = mpimg.imread(tmp_axial_whlcbl)
-    img_axial_ctx = mpimg.imread(tmp_axial_ctx)
-    img_sag_whlcbl = mpimg.imread(tmp_sag_whlcbl)
-    img_sag_ctx = mpimg.imread(tmp_sag_ctx)
-    img_cor_whlcbl = mpimg.imread(tmp_cor_whlcbl)
-    img_cor_ctx = mpimg.imread(tmp_cor_ctx)
-
-    # Composite: where ctx has red, use ctx; otherwise use whlcbl
-    # Red channel > 0.5 indicates ctx ROI
-    ctx_mask_axial = img_axial_ctx[:, :, 0] > 0.5
-    img_axial_combined = img_axial_whlcbl.copy()
-    img_axial_combined[ctx_mask_axial] = img_axial_ctx[ctx_mask_axial]
-
-    ctx_mask_sag = img_sag_ctx[:, :, 0] > 0.5
-    img_sag_combined = img_sag_whlcbl.copy()
-    img_sag_combined[ctx_mask_sag] = img_sag_ctx[ctx_mask_sag]
-
-    ctx_mask_cor = img_cor_ctx[:, :, 0] > 0.5
-    img_cor_combined = img_cor_whlcbl.copy()
-    img_cor_combined[ctx_mask_cor] = img_cor_ctx[ctx_mask_cor]
+    # Load images
+    img_axial_combined = mpimg.imread(tmp_axial)
+    img_sag_combined = crop_black_borders(mpimg.imread(tmp_sag))
+    img_cor_combined = crop_black_borders(mpimg.imread(tmp_cor))
 
     # Reshape axial strip into 5x5 grid
     strip_width = img_axial_combined.shape[1]
@@ -232,36 +262,43 @@ if os.path.exists(whlcbl_file) and os.path.exists(ctx_file):
         rows.append(row_img)
     img_axial_grid = np.vstack(rows)
 
-    # Create combined figure
-    fig = plt.figure(figsize=(20, 12), facecolor='black')
-    gs = GridSpec(2, 2, figure=fig, width_ratios=[5, 1], hspace=0.05, wspace=0.05)
+    # Create combined figure with larger sagittal/coronal views
+    fig = plt.figure(figsize=(24, 14), facecolor='black')
+    gs = GridSpec(2, 2, figure=fig, width_ratios=[3, 2], hspace=0.02, wspace=0.02)
 
     ax1 = fig.add_subplot(gs[:, 0])
     ax1.imshow(img_axial_grid)
     ax1.set_facecolor('black')
     ax1.axis('off')
+    # Shrink each axes box to its image's aspect ratio so no black padding is
+    # added, then anchor: grid to the right edge of the left column ('E'),
+    # sagittal/coronal to the left edge of the right column ('W'). This removes
+    # the blank space between the axial grid and the sagittal/coronal views.
+    ax1.set_box_aspect(img_axial_grid.shape[0] / img_axial_grid.shape[1])
+    ax1.set_anchor('E')
 
     ax2 = fig.add_subplot(gs[0, 1])
     ax2.imshow(img_sag_combined)
     ax2.set_facecolor('black')
     ax2.axis('off')
+    ax2.set_box_aspect(img_sag_combined.shape[0] / img_sag_combined.shape[1])
+    ax2.set_anchor('W')
 
     ax3 = fig.add_subplot(gs[1, 1])
     ax3.imshow(img_cor_combined)
     ax3.set_facecolor('black')
     ax3.axis('off')
+    ax3.set_box_aspect(img_cor_combined.shape[0] / img_cor_combined.shape[1])
+    ax3.set_anchor('W')
 
     combined_path = os.path.join(outputdir, "WhlCbl_ctx_SUVR_combined.png")
     fig.savefig(combined_path, facecolor='black', dpi=150, bbox_inches='tight', pad_inches=0.1)
     plt.close(fig)
 
     # Clean up temporary files
-    os.remove(tmp_axial_whlcbl)
-    os.remove(tmp_axial_ctx)
-    os.remove(tmp_sag_whlcbl)
-    os.remove(tmp_sag_ctx)
-    os.remove(tmp_cor_whlcbl)
-    os.remove(tmp_cor_ctx)
+    os.remove(tmp_axial)
+    os.remove(tmp_sag)
+    os.remove(tmp_cor)
 
 # Now plot the absolute SUVR with discrete scale for visualization
 n_colors = 16
@@ -272,4 +309,3 @@ discrete_cmap = ListedColormap(color_list)
 nilearn.plotting.plot_stat_map(masked_img, display_mode='mosaic', bg_img=None, black_bg=True, draw_cross=False, cmap=base_cmap,
         cut_coords=8, title="SUVR_mosaic", cbar_tick_format="%i",vmin=0, vmax=3,
         output_file=os.path.join(outputdir, "SUVR_mosaic.png"))
-

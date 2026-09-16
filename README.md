@@ -37,7 +37,7 @@ Centiloid values are computed using multiple reference regions:
 #### Pull from Docker Hub
 
 ```bash
-docker pull kjobson/greedypop:1.0.0
+docker pull kjobson/greedypop:1.1.0
 ```
 
 #### Build from Source
@@ -48,6 +48,23 @@ cd greedyPOP
 docker build -t greedypop:latest .
 ```
 
+### Flywheel Gear
+
+greedyPOP is also packaged as a [Flywheel](https://flywheel.io/) gear (see `manifest.json`), built on top of the same `kjobson/greedypop:1.1.0` Docker image.
+
+#### Upload to a Flywheel Instance
+
+Requires the [Flywheel CLI](https://flywheel-io.gitlab.io/product/backend/sdk/branches/master/python/cli.html):
+
+```bash
+git clone https://github.com/kjobson-neuro/greedyPOP.git
+cd greedyPOP
+fw login <your-api-key>
+fw gear upload
+```
+
+This builds the Docker image and pushes the gear (using the `version` in `manifest.json`) to your Flywheel instance's gear registry, where it becomes available to run on projects you have access to.
+
 ## Usage
 
 ### Docker
@@ -56,7 +73,7 @@ docker build -t greedypop:latest .
 docker run -v /path/to/data:/flywheel/v0/input \
            -v /path/to/output:/flywheel/v0/output \
            -v /path/to/work:/flywheel/v0/work \
-           kjobson/greedypop:1.0.0 \
+           kjobson/greedypop:1.1.0 \
            -a /flywheel/v0/input/pet_scan.nii.gz \
            -r Florbetaben \
            -t Eight \
@@ -86,6 +103,43 @@ docker run -v /path/to/data:/flywheel/v0/input \
 | `-t Eight` | Target 8mm FWHM effective resolution | - |
 | `-t Ten` | Target 10mm FWHM effective resolution | - |
 
+### Flywheel Gear
+
+Once uploaded to your Flywheel instance, greedyPOP can be run from the Flywheel UI or CLI like any other gear.
+
+#### Via the Flywheel UI
+
+1. Navigate to a session containing a PET scan.
+2. Select the **greedypop** gear from the gear list.
+3. Attach the PET NIfTI file as the `petdata` input.
+4. Set the `origin` and `resolution` config options as needed, and select a `tracer` (required — there is no default, since running with the wrong tracer silently produces incorrect Centiloid values).
+5. Run the gear.
+
+#### Via the Flywheel CLI
+
+```bash
+fw job run greedypop \
+    petdata=<file-reference> \
+    --project <group>/<project> \
+    origin=Keep \
+    tracer=Florbetaben \
+    resolution=Six
+```
+
+#### Gear Config Options
+
+| Config | Description | Values | Default |
+|--------|-------------|--------|---------|
+| `origin` | Origin setting | `Keep`, `Reset` | `Keep` |
+| `tracer` | Tracer type | `Florbetapir`, `Florbetaben`, `Flutemetamol` | None — required |
+| `resolution` | Target resolution | `Six`, `Eight`, `Ten` | `Six` |
+
+#### Gear Inputs
+
+| Input | Description | Required |
+|-------|-------------|----------|
+| `petdata` | PET data file (NIfTI) | Yes |
+
 ### Singularity / Apptainer
 
 For HPC environments where Docker is not available, you can convert the Docker image to a Singularity/Apptainer image.
@@ -94,10 +148,10 @@ For HPC environments where Docker is not available, you can convert the Docker i
 
 ```bash
 # Pull from Docker Hub and convert to SIF format
-singularity pull greedypop_1.0.0.sif docker://kjobson/greedypop:1.0.0
+singularity pull greedypop_1.1.0.sif docker://kjobson/greedypop:1.1.0
 
 # Or using Apptainer (newer name for Singularity)
-apptainer pull greedypop_1.0.0.sif docker://kjobson/greedypop:1.0.0
+apptainer pull greedypop_1.1.0.sif docker://kjobson/greedypop:1.1.0
 ```
 
 #### Running with Singularity
@@ -107,7 +161,7 @@ singularity run \
     --bind /path/to/data:/flywheel/v0/input \
     --bind /path/to/output:/flywheel/v0/output \
     --bind /path/to/work:/flywheel/v0/work \
-    greedypop_1.0.0.sif \
+    greedypop_1.1.0.sif \
     -a /flywheel/v0/input/pet_scan.nii.gz \
     -r Florbetaben \
     -t Eight \
@@ -121,7 +175,7 @@ apptainer run \
     --bind /path/to/data:/flywheel/v0/input \
     --bind /path/to/output:/flywheel/v0/output \
     --bind /path/to/work:/flywheel/v0/work \
-    greedypop_1.0.0.sif \
+    greedypop_1.1.0.sif \
     -a /flywheel/v0/input/pet_scan.nii.gz \
     -r Florbetaben \
     -t Eight \
@@ -143,7 +197,7 @@ singularity run \
     --bind $SCRATCH/data:/flywheel/v0/input \
     --bind $SCRATCH/output:/flywheel/v0/output \
     --bind $SCRATCH/work:/flywheel/v0/work \
-    $HOME/containers/greedypop_1.0.0.sif \
+    $HOME/containers/greedypop_1.1.0.sif \
     -a /flywheel/v0/input/pet_scan.nii.gz \
     -r Florbetapir \
     -t Eight \

@@ -172,9 +172,9 @@ fi
 num_vols=$(${FREESURFER_HOME}/bin/mri_info --nframes "${nifti_pet}")
 if [[ "${num_vols}" -gt 1 ]]; then
 	# Data is a series and needs to be processed
-        mcflirt -in "${nifti_pet}" -out "${work_dir}/mc_pet.nii.gz"
+        "${FSLDIR}/bin/mcflirt" -in "${nifti_pet}" -out "${work_dir}/mc_pet.nii.gz"
         pet_av="${work_dir}/pet_av.nii.gz"
-        fslmaths "${work_dir}/mc_pet.nii.gz" -Tmean "${work_dir}/pet_av.nii.gz"
+        "${FSLDIR}/bin/fslmaths" "${work_dir}/mc_pet.nii.gz" -Tmean "${work_dir}/pet_av.nii.gz"
         nifti_pet="${work_dir}/pet_av.nii.gz"
 else
         echo "One volume submitted to be processed, co-reg and averaging is assumed to be done."

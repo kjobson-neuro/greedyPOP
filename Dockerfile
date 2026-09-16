@@ -138,6 +138,17 @@ RUN pip3 install --no-cache-dir \
         simpleitk \
         surfa
 
+# Install just the FSL tools we need (mcflirt, fslmaths) from FSL's modular
+# conda channel, instead of the full multi-GB FSL distribution.
+RUN conda create -y -n fsl-min \
+        -c https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/public/ \
+        -c conda-forge \
+        fsl-mcflirt fsl-avwutils && \
+    conda clean -afy
+
+ENV FSLDIR=/usr/local/miniconda/envs/fsl-min \
+    FSLOUTPUTTYPE=NIFTI_GZ
+
 # Set library environment variables
 ENV LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libgomp.so.1 /usr/lib/x86_64-linux-gnu/libatomic.so.1" \
     MKL_DEBUG_CPU_TYPE=5 \
