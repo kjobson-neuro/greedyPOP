@@ -37,7 +37,7 @@ Centiloid values are computed using multiple reference regions:
 #### Pull from Docker Hub
 
 ```bash
-docker pull kjobson/greedypop:1.1.0
+docker pull kjobson/greedypop:1.3.0
 ```
 
 #### Build from Source
@@ -45,12 +45,14 @@ docker pull kjobson/greedypop:1.1.0
 ```bash
 git clone https://github.com/kjobson-neuro/greedyPOP.git
 cd greedyPOP
-docker build -t greedypop:latest .
+docker build --platform linux/amd64 -t kjobson/greedypop:1.3.0 .
 ```
+
+The image tag should match the `version` in `manifest.json` (and `custom.gear-builder.image`) so the Flywheel gear build stays in sync with the Docker image it wraps.
 
 ### Flywheel Gear
 
-greedyPOP is also packaged as a [Flywheel](https://flywheel.io/) gear (see `manifest.json`), built on top of the same `kjobson/greedypop:1.1.0` Docker image.
+greedyPOP is also packaged as a [Flywheel](https://flywheel.io/) gear (see `manifest.json`), built on top of the same `kjobson/greedypop:1.3.0` Docker image.
 
 #### Upload to a Flywheel Instance
 
@@ -73,7 +75,7 @@ This builds the Docker image and pushes the gear (using the `version` in `manife
 docker run -v /path/to/data:/flywheel/v0/input \
            -v /path/to/output:/flywheel/v0/output \
            -v /path/to/work:/flywheel/v0/work \
-           kjobson/greedypop:1.1.0 \
+           kjobson/greedypop:1.3.0 \
            -a /flywheel/v0/input/pet_scan.nii.gz \
            -r Florbetaben \
            -t Eight \
@@ -148,10 +150,10 @@ For HPC environments where Docker is not available, you can convert the Docker i
 
 ```bash
 # Pull from Docker Hub and convert to SIF format
-singularity pull greedypop_1.1.0.sif docker://kjobson/greedypop:1.1.0
+singularity pull greedypop_1.3.0.sif docker://kjobson/greedypop:1.3.0
 
 # Or using Apptainer (newer name for Singularity)
-apptainer pull greedypop_1.1.0.sif docker://kjobson/greedypop:1.1.0
+apptainer pull greedypop_1.3.0.sif docker://kjobson/greedypop:1.3.0
 ```
 
 #### Running with Singularity
@@ -161,7 +163,7 @@ singularity run \
     --bind /path/to/data:/flywheel/v0/input \
     --bind /path/to/output:/flywheel/v0/output \
     --bind /path/to/work:/flywheel/v0/work \
-    greedypop_1.1.0.sif \
+    greedypop_1.3.0.sif \
     -a /flywheel/v0/input/pet_scan.nii.gz \
     -r Florbetaben \
     -t Eight \
@@ -175,7 +177,7 @@ apptainer run \
     --bind /path/to/data:/flywheel/v0/input \
     --bind /path/to/output:/flywheel/v0/output \
     --bind /path/to/work:/flywheel/v0/work \
-    greedypop_1.1.0.sif \
+    greedypop_1.3.0.sif \
     -a /flywheel/v0/input/pet_scan.nii.gz \
     -r Florbetaben \
     -t Eight \
@@ -197,7 +199,7 @@ singularity run \
     --bind $SCRATCH/data:/flywheel/v0/input \
     --bind $SCRATCH/output:/flywheel/v0/output \
     --bind $SCRATCH/work:/flywheel/v0/work \
-    $HOME/containers/greedypop_1.1.0.sif \
+    $HOME/containers/greedypop_1.3.0.sif \
     -a /flywheel/v0/input/pet_scan.nii.gz \
     -r Florbetapir \
     -t Eight \
@@ -220,8 +222,26 @@ singularity run \
 | `voi_ctx.nii.gz` | Cortical VOI in template space |
 | `voi_WhlCbl.nii.gz` | Whole cerebellum VOI in template space |
 | `greedyPOP_*.csv` | Results CSV with SUVR, Centiloid values, and FWHM estimates |
+| `greedyPOP_QC_*.csv` | QC metrics CSV — asymmetry indices and cerebellar reference sanity checks (see below) |
 | `greedyPOP.itksnap` | ITK-SNAP workspace for visualization |
-| `*.png` | QC visualization images |
+| `SUVR_mosaic.png` | Whole-brain SUVR mosaic |
+| `voi_<region>_SUVR_mosaic_prism.png` | Per-VOI SUVR mosaic (one per reference region: `CerebGry`, `ctx`, `Pons`, `WhlCbl`, `WhlCblBrnStm`) |
+| `voi_<region>_SUVR_combined.png` | Per-VOI SUVR overlay combined with the VOI outline |
+| `WhlCbl_ctx_SUVR_combined.png` | Combined cortical VOI + whole-cerebellum reference overlay |
+
+## Asymmetry & QC Flags
+
+Each run writes a `greedyPOP_QC_*.csv` alongside the results CSV, and prints any flagged warnings to the console. QC logic lives in `workflows/qc.py`; thresholds are placeholders and should be tuned against your own clean scans.
+
+- **Cortical asymmetry index (AI)** — `AI = 100 * (L - R) / ((L + R)/2)`, computed two ways:
+  - **Global** (`global_AI_pct`) — over the whole Centiloid cortical VOI, split left/right at its own centroid.
+  - **Per lobe** (`Frontal_AI_pct`, `Parietal_AI_pct`, `Temporal_AI_pct`, `Occipital_AI_pct`) — from an MNI-space label atlas split at the midline, to catch focal asymmetry the global VOI would average out.
+  - AI is reference-region invariant (the reference cancels out of the ratio), so it's unaffected by which of the four reference regions is used for Centiloid conversion.
+  - Flagged (`Asymmetry_flag`) when `|AI|` exceeds `ASYM_AI_ABS_PCT` (default 10%) globally or in any lobe.
+- **Cerebellar reference anomaly** (`RefAnomaly_flag`) — the whole-cerebellum / cerebellar-gray uptake ratio (`WhlCbl_to_CerebGry_ratio`) is flagged if it falls outside `[1.05, 1.35]`. A ratio that drifts low can indicate white-matter contamination (Centiloid underestimate); drifting high can indicate cerebellar atrophy or CSF partial-volume effects (Centiloid overestimate).
+- **Dice** (`Dice_effective`) — the effective registration Dice score is reported for interpretation, not flagged.
+
+These flags are sanity checks, not diagnostic calls — a flagged scan should be visually reviewed (e.g. via the generated `greedyPOP.itksnap` workspace) rather than automatically excluded.
 
 ## Dependencies
 

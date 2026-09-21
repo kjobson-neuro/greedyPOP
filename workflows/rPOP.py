@@ -589,6 +589,28 @@ def rPOP(input_file, output_dir, set_origin, tracer, work_dir, temp_dir):
     print("\ngreedyPOP just finished! Warped and differentially smoothed AC PET images were generated.")
     print("Lookup the .csv database to assess FWHM estimations and filters applied.\n")
 
+    # ---- QC flags (asymmetry + cerebellar reference) ----
+    # Runs AFTER the results CSV so a QC problem can never block the primary
+    # Centiloid output; any failure here is reported, not raised.
+    qc_warnings = []
+    try:
+        from qc import compute_qc_flags
+        effective_dice = dice_score_stripped if 'dice_score_stripped' in locals() else dice_score_masks
+        lobar_atlas = os.path.join(temp_dir, 'MNI-maxprob-thr25-2mm.nii.gz')
+        qc_warnings = compute_qc_flags(
+            smoothed_img, ctx_resamp, masked_mean_from_disk,
+            avg_wc_voi_bin, avg_wcgm_voi_bin, effective_dice,
+            output_dir, atlas_path=lobar_atlas,
+        )
+    except Exception as e:
+        print(f"QC flags could not be computed (non-fatal): {e}")
+
+    if qc_warnings:
+        print("\n" + "="*66)
+        print("QC WARNING -- visually inspect PET scan for asymmetry in these regions")
+        for w in qc_warnings:
+            print(f"  - {w}")
+        print("="*66 + "\n")
+
 # Execute:
 rPOP(input_file, output_dir, origin, tracer, work_dir, temp_dir)
-

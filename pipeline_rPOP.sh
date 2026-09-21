@@ -192,16 +192,13 @@ python3 "${exe_dir}/viz.py" -pet "${suvr}" -mask "${work_dir}/w_pet_mask.nii.gz"
 voi_dir="${rpop_dir}/Centiloid_Std_VOI/nifti/1mm"
 
 # Create ITK-SNAP workspace for interactive visualization
-# To add more images later, use:
-#   itksnap-wt -i "${out_dir}/greedyPOP.itksnap" -layers-add-anat <image.nii.gz> -o "${out_dir}/greedyPOP.itksnap"
-#   itksnap-wt -i "${out_dir}/greedyPOP.itksnap" -layers-add-seg <segmentation.nii.gz> -o "${out_dir}/greedyPOP.itksnap"
 voi_dir="${rpop_dir}/Centiloid_Std_VOI/nifti/2mm"
 
 # Build workspace with one segmentation and cortex as overlay
 itksnap-wt \
+    -layers-set-main "${out_dir}/suvr.nii.gz" -tags-add "SUVR" \
     -layers-add-seg "${out_dir}/voi_WhlCbl.nii.gz" -tags-add "Whole_Cerebellum" \
     -layers-add-anat "${out_dir}/voi_ctx.nii.gz" -tags-add "Cortex" \
-    -layers-set-main "${out_dir}/suvr.nii.gz" -tags-add "SUVR" \
     -layers-add-anat "${out_dir}/sw_pet.nii.gz" -tags-add "Smoothed_PET" \
     -o "${out_dir}/greedyPOP.itksnap"
 
@@ -215,4 +212,3 @@ if ! ls "${out_dir}"/*.csv 1>/dev/null 2>&1; then
     echo "ERROR: No CSV files found in output directory" >&2
     exit 1
 fi
-
