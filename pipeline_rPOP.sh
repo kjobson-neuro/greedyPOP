@@ -162,10 +162,10 @@ if [[ "$petdata" == *.nii.gz ]] || [[ "$petdata" == *.nii ]]; then
         # NIfTI input - copy directly, skip dcm2niix
         echo "Detected NIfTI input - skipping dcm2niix"
         nifti_pet="$petdata"
-elif file "$petdata" | grep -q 'Zip archive data'; then
+elif [[ "$petdata" == *.zip ]]; then
         # DICOM zip
         unzip -d "$dcm_dir" "$petdata"
-        dcm2niix -f %d -b y -o "${dcm_dir}/" "$petdata"
+        dcm2niix -f %d -b y -o "${dcm_dir}/" "$dcm_dir"
         nifti_pet=("${dcm_dir}"/*.nii "${dcm_dir}"/*.nii.gz)
 fi
 
@@ -211,4 +211,12 @@ fi
 if ! ls "${out_dir}"/*.csv 1>/dev/null 2>&1; then
     echo "ERROR: No CSV files found in output directory" >&2
     exit 1
+fi
+
+# Archive the intermediate work directory into the output folder
+if [ -d "$work_dir" ] && [ -n "$(ls -A "$work_dir" 2>/dev/null)" ]; then
+    echo "Zipping work directory to ${out_dir}/work.zip"
+    (cd "$(dirname "$work_dir")" && zip -rq "${out_dir}/work.zip" "$(basename "$work_dir")")
+else
+    echo "Work directory is empty - skipping work.zip"
 fi
